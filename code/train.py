@@ -1,3 +1,4 @@
+import pandas as pd
 import torch
 from tqdm import tqdm
 
@@ -10,10 +11,13 @@ class Model_Process():
         self.criterion = config['Loss_function'].cuda()
         self.epoch = config['Epochs']
         self.optimizer = getattr(torch.optim, config['Optimizer'])(model.parameters(), **config['Optim_hparas'])
+        self.savepath = args.path
+        self.resultpath = args.resultpath
         self.acc = []
         self.loss = []
         self.vision = args.vision
         self.max_acc = 0
+        self.args = args
 
 
     def train(self, train_dataloader, valid_dataloader, device):
@@ -74,6 +78,32 @@ class Model_Process():
             
             if self.max_acc < avg_valid_acc:
                 self.max_acc = avg_valid_acc
-                torch.save(self.model, 'netweight/classnlp_{}_{}'.format(self.vision, round(avg_valid_acc*100, 2)))
+                torch.save(self.model.state_dict(), '{}classnlp_{}_{}'.format(self.savepath, self.vision, round(avg_valid_acc*100, 2)))
+
+    def test(self, test_loader, device):
+        ans = []
+        df = pd.DataFrame()
+        with torch.no_grad():
+            for test_input in tqdm(test_loader):
+                mask = test_input['attention_mask'].to(device)
+                input_id = test_input['input_ids'].squeeze(1).to(device)
+
+                output = self.model(input_id, mask)
+
+                # print(output.argmax(dim=1).item())
+
+                ans.append(output.argmax(dim=1).item())
+                # break
+
+        # print(ans)
+        df['pred'] = ans
+        df.to_csv('{}_{}_{}_out.csv'.format(self.resultpath, self.args.loadname, self.args.vision))
+
+
+        
+
+
+
+
                 
             

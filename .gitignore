@@ -1,4 +1,7 @@
 
 /netweight
+/testresult
 /dataset
-/code/__pycache__
+/__pycache__
+
+.pyc

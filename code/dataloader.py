@@ -14,7 +14,7 @@ class Dataset_loader():
         self.batch_size = batch_size
 
     # 必須要使用的 loader
-    def get_loader(self):
+    def get_loaders(self):
         train_dataloader = data.DataLoader(
             self.train_dataset,
             batch_size = self.batch_size,   # 太大你的 gpu mem 可能會爆炸 (但你 batchsize 如果大於 1 一定要用 padding > tokenize 那邊)
@@ -30,6 +30,36 @@ class Dataset_loader():
         )
 
         return train_dataloader, valid_dataloader
+
+
+class Test_loader():
+    def __init__(self, root, batch_size):
+        self.root = root
+        self.path = '{}fixed_{}.csv'
+        self.batch_size = batch_size
+        self.df_test = pd.read_csv(self.path.format(self.root, 'test'))
+        print("> Loading Datas from path {} ...".format(root))
+        print("Test datas : {}".format(len(self.df_test['conv_id'])))
+        self.preprocessing()
+
+
+    def preprocessing(self):
+        self.df_test['prompt'] = self.df_test['prompt'].str.replace("_comma_", ",")
+        print("> Data Preprocessing ...")
+
+
+    def get_loader(self):
+        test_dataset = Test_Dataset_Handler(self.df_test)
+        test_dataloader = data.DataLoader(
+            test_dataset,
+            batch_size = self.batch_size,
+            shuffle = False,
+            num_workers = 1
+        )
+        return test_dataloader
+
+    
+    
 
 
 class Dataset_Preprocessing():
@@ -53,12 +83,14 @@ class Dataset_Preprocessing():
         self.df_train.drop_duplicates(subset=column_names, keep='first', inplace=True)
         self.df_valid.drop_duplicates(subset=column_names, keep='first', inplace=True)
 
-        self.df_train['prompt'].replace("_comma_", ",")
-        self.df_valid['prompt'].replace("_comma_", ",")
+        self.df_train['prompt'] = self.df_train['prompt'].str.replace("_comma_", ",")
+        self.df_valid['prompt'] = self.df_valid['prompt'].str.replace("_comma_", ",")
         print("> Data Preprocessing ...")
 
 
         return self.df_train, self.df_valid
+    
+    
 
         # token set or something
 
@@ -67,6 +99,7 @@ class Dataset_Preprocessing():
 class Dataset_Handler(data.Dataset):
     # 目前只考慮 prompt 與 label 之後要用 concate 可以從這裡下手
     def __init__(self, df, mode):
+        
         self.labels = [label for label in df['label']]
         self.texts = [tokenizer(text, # padding='max_length', max_length=512, # 不用padding 可以簡少訓練時間 tensor較小 (但你 batchsize 如果大於 1 一定要用 padding)
                                 truncation=True, return_tensors="pt")
@@ -74,21 +107,34 @@ class Dataset_Handler(data.Dataset):
                      ]
         print("{} datas : {}".format(mode, len(self.labels)))
     
+    
     def __len__(self):
         return len(self.labels)
     
 
     def __getitem__(self, idx):
-
         batch_texts = self.texts[idx]
         batch_y = np.array(self.labels[idx])
-
-#         batch_texts = self.labels[idx]
-#         batch_y = self.texts[idx]
 
         return batch_texts, batch_y
 
 
+class Test_Dataset_Handler(data.Dataset):
+    def __init__(self, df):
+        self.texts = [tokenizer(text,
+                                truncation=True, return_tensors="pt")
+                      for text in df['prompt']
+                     ]
+    
+    def __len__(self):
+        return len(self.texts)
+
+    def __getitem__(self, idx):
+        batch_text = self.texts[idx]
+
+        return batch_text
+
+    
 # train_dataloader, valid_dataloader = Dataset_loader('../dataset/', 1).get_loader()
 
 # for txt in train_dataloader:
@@ -97,4 +143,9 @@ class Dataset_Handler(data.Dataset):
 
 
 
+# test_loader = Test_loader('../dataset/', 1).get_loader()
+
+# for txt in test_loader:
+#     print(txt)
+#     break
 
