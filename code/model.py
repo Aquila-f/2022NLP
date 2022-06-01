@@ -10,95 +10,156 @@ from einops.layers.torch import Reduce
 
 
 class BertClassifier(nn.Module):
-    def __init__(self, model_name, dropout=0.5):
-
+    def __init__(self, model_name, classifermethod=1, dropout=0.5):
         super(BertClassifier, self).__init__()
-
         self.bert = AutoModel.from_pretrained(model_name)
+        self.classifer = classifermethod
 
-        self.drop = nn.Dropout(dropout)
+        self.pureclassifer = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.LayerNorm(768),
+            nn.Linear(768,32),
+            nn.LeakyReLU()
+        )
         
         self.fc1 = nn.Sequential(
             Reduce('b n e -> b e', reduction='mean'),
+            nn.Dropout(dropout),
             nn.LayerNorm(768),
             nn.Linear(768, 32),
-            # nn.Dropout(),
             nn.LeakyReLU() # Tanh / Leakyrelu
         )
-        
-
     def forward(self, input_id, mask):
         # with torch.no_grad():
         outs = self.bert(
             input_ids= input_id, 
             # token_type_ids=seg,
             attention_mask=mask,
-            # return_dict=False
+            # return_dict=True
         )
-        
-        # print(outs)
-        # print(outs[0].size())
-        # print(outs[0].shape)
-        # print(outs[1].shape)
-        # print(outs[2].shape)
-        # print(outs[3].shape)
 
+        if self.classifer == 1:
+            outs = self.pureclassifer(outs[1])
+        else:
+            outs = self.fc1(outs[0])  
         
-        outs = self.drop(outs[0])
-        outs = self.fc1(outs)
-        
-
         return outs
 
-# class BertClassifier(nn.Module):
-#     def __init__(self, dropout=0.5):
+class BiBertClassifier(nn.Module):
+    def __init__(self, model_name, classifermethod=1, dropout=0.5):
+        super(BiBertClassifier, self).__init__()
+        self.bert = AutoModel.from_pretrained(model_name)
+        self.classifer = classifermethod
 
+        self.pureclassifer = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.LayerNorm(768),
+            nn.Linear(768,32),
+            nn.LeakyReLU()
+        )
+        
+        self.fc1 = nn.Sequential(
+            Reduce('b n e -> b e', reduction='mean'),
+            nn.Dropout(dropout),
+            nn.LayerNorm(768),
+            nn.Linear(768, 32),
+            nn.LeakyReLU() # Tanh / Leakyrelu
+        )
+    def forward(self, input_id, mask, input_id2, mask2, mode = ''):
+        # with torch.no_grad():
+        outs = self.bert(
+            input_ids= input_id, 
+            # token_type_ids=seg,
+            attention_mask=mask,
+            # return_dict=True
+        )
+        if mode == 'train':
+            outs2 = self.bert(
+                input_ids= input_id2, 
+                # token_type_ids=seg,
+                attention_mask=mask2,
+                # return_dict=True
+            )
+
+        outs = outs[self.classifer]*0.5 + outs2[self.classifer]*0.5 if mode == 'train' else outs[self.classifer]
+        
+
+        if self.classifer == 1:
+            outs = self.pureclassifer(outs)
+        else:
+            outs = self.fc1(outs)  
+        
+        return outs
+
+
+class SpBertClassifier(nn.Module):
+    def __init__(self, model_name, classifermethod=1, dropout=0.5):
+        super(BertClassifier, self).__init__()
+        self.bert = AutoModel.from_pretrained(model_name)
+        self.classifer = classifermethod
+
+        self.pureclassifer = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.LayerNorm(768),
+            nn.Linear(768,32),
+            nn.LeakyReLU()
+        )
+        
+        self.fc1 = nn.Sequential(
+            Reduce('b n e -> b e', reduction='mean'),
+            nn.Dropout(dropout),
+            nn.LayerNorm(768),
+            nn.Linear(768, 32),
+            nn.LeakyReLU() # Tanh / Leakyrelu
+        )
+    def forward(self, input_id, mask):
+        # with torch.no_grad():
+        outs = self.bert(
+            input_ids= input_id, 
+            # token_type_ids=seg,
+            attention_mask=mask,
+            # return_dict=True
+        )
+
+        if self.classifer == 1:
+            outs = self.pureclassifer(outs[1])
+        else:
+            outs = self.fc1(outs[0])  
+        
+        return outs
+
+# class BiBertClassifier(nn.Module):
+#     def __init__(self, model_name, classifermethod=1, dropout=0.5):
 #         super(BertClassifier, self).__init__()
-
-#         self.bert = BertModel.from_pretrained('bert-base-cased')
-#         self.fc1 = nn.Sequential(
+#         self.bert = AutoModel.from_pretrained(model_name)
+#         self.classifer = classifermethod
+#         self.pureclassifer = nn.Sequential(
 #             nn.Dropout(dropout),
+#             nn.LayerNorm(768),
+#             nn.Linear(768,32),
+#             nn.LeakyReLU()
+#         )
+        
+#         self.fc1 = nn.Sequential(
+#             Reduce('b n e -> b e', reduction='mean'),
+#             nn.Dropout(dropout),
+#             nn.LayerNorm(768),
 #             nn.Linear(768, 32),
-#             nn.ReLU()
+#             nn.LeakyReLU() # Tanh / Leakyrelu
+#         )
+#     def forward(self, input_id, mask):
+#         # with torch.no_grad():
+#         outs = self.bert(
+#             input_ids= input_id, 
+#             # token_type_ids=seg,
+#             attention_mask=mask,
+#             # return_dict=True
 #         )
 
-#     def forward(self, input_id, mask):
-#         # bert 這個 model 的 output 還要再看一下
-#         _, outs = self.bert(input_ids= input_id, attention_mask=mask,return_dict=False)
-#         outs = self.fc1(outs)
-
+#         if self.classifer == 1:
+#             outs = self.pureclassifer(outs[1])
+#         else:
+#             outs = self.fc1(outs[0])        
+        
 #         return outs
 
-class DoubleBertClassifier(nn.Module):
-    def __init__(self, dropout=0.5):
-
-        super(BertClassifier, self).__init__()
-
-        self.bert1 = AutoModel.from_pretrained('bert-base-cased')
-        self.drop1 = nn.Dropout(dropout)
-        self.drop2 = nn.Dropout(dropout)
-        self.fc1 = nn.Sequential(
-            nn.Linear(768, 256),
-            nn.Dropout(0.5),
-            nn.Sigmoid()
-        )
-        self.fc2 = nn.Sequential(
-            nn.Linear(768, 256),
-            nn.Dropout(dropout),
-            nn.Sigmoid()
-        )
-        self.finalfc = nn.Sequential(
-            nn.Linear(512, 32),
-        )
-
-    def forward(self, input_id1, mask1, input_id2, mask2):
-        _, outs = self.bert1(input_ids= input_id1, attention_mask=mask1,return_dict=False)
-        _, outs = self.bert2(input_ids= input_id2, attention_mask=mask2,return_dict=False)
-        outs = torch.cat((outs, outs), 0)
-
-
-        outs = self.drop(outs)
-        outs = self.fc1(outs)
-        outs = self.fc2(outs)
-
-        return outs

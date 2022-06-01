@@ -9,35 +9,65 @@ import random
 
 
 class Dataset_loader():
-    def __init__(self, root, batch_size, tokenizer_name, dropp=0.2):
-        self.dtokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-        print("> Data Preprocessing ...")
-        self.df_train_pp = Dataset_Preprocessing(root, 'train', 1-dropp).preprocessing()
-        self.df_valid_pp = Dataset_Preprocessing(root, 'valid', 1-dropp).preprocessing()
-        print("> Data tokenizing ...")
-        self.train_dataset = Dataset_Handler(self.df_train_pp, 'train', self.dtokenizer)
-        self.valid_dataset = Dataset_Handler(self.df_valid_pp, 'Valid', self.dtokenizer)
-        self.batch_size = batch_size
+    def __init__(self, config, mode=""):
+        self.dtokenizer = AutoTokenizer.from_pretrained(config['Model_name'])
+        self.mix = config['Mixup']
+        if mode == "test":
+            self.df_test_pp = Dataset_Preprocessing(config['Root'], 'test').preprocessing()
+            self.test_dataset = Dataset_Handler(self.df_test_pp, 'test', self.dtokenizer)
+
+        else:
+            print("> Data Preprocessing ...")
+            self.df_train_pp = Dataset_Preprocessing(config['Root'], 'train', config['Datadroppercent']).preprocessing() 
+            self.df_valid_pp = Dataset_Preprocessing(config['Root'], 'valid', config['Datadroppercent']).preprocessing()
+            print("> Data tokenizing ...")
+
+            self.train_dataset = Dataset_Handler(self.df_train_pp, 'train', self.dtokenizer, config['Random_maskn']) if config['Mixup'] == 0 else BiDataset_Handler(self.df_train_pp, 'train', self.dtokenizer, config['Random_maskn'])
+            self.valid_dataset = Dataset_Handler(self.df_valid_pp, 'valid', self.dtokenizer)
+        self.batch_size = config['Batch_size']
 
     def create_mini_batch(self, samples):
-        # print(samples, flush=True)
         
-        tokens_tensors = [s[0] for s in samples]
+        tokens_tensors = [s['tokens'] for s in samples]
+        
         # segments_tensors = [s[1] for s in samples]
         
-        if samples[0][1] is not None:
-            label_ids = torch.stack([s[1] for s in samples])
+        if samples[0]['labels'] is not None:
+            label_ids = torch.stack([s['labels'] for s in samples])
         else:
             label_ids = None
 
         tokens_tensors = pad_sequence(tokens_tensors, batch_first=True)
-        # segments_tensors = pad_sequence(segments_tensors, batch_first=True)
 
         masks_tensors = torch.zeros(tokens_tensors.shape, dtype=torch.long)
         masks_tensors = masks_tensors.masked_fill(tokens_tensors != 0, 1)
-        # segments_tensors
+    
+        return {"tokens":tokens_tensors, "masks":masks_tensors, "labels":label_ids}
 
-        return tokens_tensors, masks_tensors, label_ids
+    def bi_create_mini_batch(self, samples):
+        
+        tokens_tensors = [s['tokens'] for s in samples]
+        
+        # segments_tensors = [s[1] for s in samples]
+        
+        if samples[0]['labels'] is not None:
+            label_ids = torch.stack([s['labels'] for s in samples])
+        else:
+            label_ids = None
+
+        tokens_tensors = pad_sequence(tokens_tensors, batch_first=True)
+
+        masks_tensors = torch.zeros(tokens_tensors.shape, dtype=torch.long)
+        masks_tensors = masks_tensors.masked_fill(tokens_tensors != 0, 1)
+
+        if self.mix == 1:
+            tokens_tensors2 = [s['tokens2'] for s in samples]
+            tokens_tensors2 = pad_sequence(tokens_tensors2, batch_first=True)
+            masks_tensors2 = torch.zeros(tokens_tensors2.shape, dtype=torch.long)
+            masks_tensors2 = masks_tensors2.masked_fill(tokens_tensors2 != 0, 1)
+            return {"tokens":tokens_tensors, "masks":masks_tensors, "tokens2" : tokens_tensors2, "masks2":masks_tensors2 ,"labels":label_ids}
+    
+        return {"tokens":tokens_tensors, "masks":masks_tensors, "labels":label_ids}
 
     # 必須要使用的 loader
     def get_loaders(self):
@@ -46,7 +76,7 @@ class Dataset_loader():
             batch_size = self.batch_size,   # 太大你的 gpu mem 可能會爆炸 (但你 batchsize 如果大於 1 一定要用 padding > tokenize 那邊)
             shuffle = True,                 # shuffle
             num_workers = 2,                # 平行處理數量
-            collate_fn = self.create_mini_batch
+            collate_fn = self.bi_create_mini_batch
         )
 
         valid_dataloader = data.DataLoader(
@@ -59,9 +89,19 @@ class Dataset_loader():
 
         return train_dataloader, valid_dataloader
     
+    def get_test_loader(self):
+        test_dataloader = data.DataLoader(
+            self.test_dataset,
+            batch_size = self.batch_size,
+            shuffle = False,
+            num_workers = 2,
+            collate_fn = self.create_mini_batch
+        )
+        return test_dataloader
+    
 
 class Dataset_Preprocessing():
-    def __init__(self, root, mode, dropp):
+    def __init__(self, root, mode, dropp=0.):
         self.path = '{}fixed_{}.csv'
         self.mode = mode
         self.dropdf = dropp
@@ -88,19 +128,23 @@ class Dataset_Preprocessing():
                     i+=1
                     s+=1
                     if i > len(self.df)-1: break
-                for ss in range(s):
-                    self.df.loc[tmp+ss+1, 'utterance'] = self.df.loc[tmp, 'utterance']
+                if self.mode == 'test':
+                    for ss in range(s):
+                        self.df.loc[tmp+ss+1, 'utterance'] = self.df.loc[tmp, 'utterance']
         
-        # column_names = ['conv_id']
-        # self.df.drop_duplicates(subset=column_names, keep='first', inplace=True)
+        if self.mode != 'test':
+            column_names = ['conv_id']
+            self.df.drop_duplicates(subset=column_names, keep='first', inplace=True)
+
         self.df['prompt'] = self.df['prompt'].str.replace("_comma_", ",")
         self.df['utterance'] = self.df['utterance'].str.replace("_comma_", ",")
-        # for sss in range(5):
-        #     print(self.df.loc[sss, 'utterance'])
+
+        
 
         # print(len(self.df))
-        # d = -len(self.df)*self.dropdf
-        # self.df = self.df.drop(self.df.index[int(d):])
+        if self.dropdf > 0:
+            d = -len(self.df)*self.dropdf
+            self.df = self.df.drop(self.df.index[int(d):])
         # print(len(self.df))
 
         return self.df
@@ -110,10 +154,11 @@ class Dataset_Preprocessing():
 
 class Dataset_Handler(data.Dataset):
     # 目前只考慮 prompt 與 label 之後要用 concate 可以從這裡下手
-    def __init__(self, df, mode, dtokenizer):
+    def __init__(self, df, mode, dtokenizer, nmask=5):
         self.mode = mode
         self.df = df
         self.tokenizer = dtokenizer
+        self.number_mask = nmask
         print("{} datas : {}".format(mode, len(self.df)))
     
     def __len__(self):
@@ -121,11 +166,16 @@ class Dataset_Handler(data.Dataset):
     
     def __getitem__(self, idx):
         text_a, text_b = self.df.iloc[idx, 2:4].values
+        
+        # print(type(self.df.iloc[idx, 4:5]))
 
         if self.mode == "test":
             label_tensor = None  
         else: 
-            label_tensor = torch.tensor(self.df.iloc[idx, 4:5])
+            label_tensor = torch.tensor(self.transform(self.df.iloc[idx, 4:5].item()), dtype=torch.float)
+            
+        # print(self.transform(label_tensor.item()))
+        # print(type(label_tensor))
 
         tokens_a = ["[CLS]"] + self.tokenizer.tokenize(text_a) + ["[SEP]"]
         # lena = len(tokens_a)
@@ -135,7 +185,7 @@ class Dataset_Handler(data.Dataset):
 
         merge_token = tokens_a + tokens_b
 
-
+        # random delete if more than 512
         while len(merge_token) > 512:
             n = ''
             s = 0
@@ -145,8 +195,9 @@ class Dataset_Handler(data.Dataset):
             merge_token.pop(s)
         
 
+        # Argumentataion
         if(self.mode == 'train'):
-            randmasknum = random.randrange(3)+1
+            randmasknum = random.randrange(self.number_mask)+1
             rn = 0
             while rn < randmasknum:
                 n = ''
@@ -163,75 +214,100 @@ class Dataset_Handler(data.Dataset):
 
             
         # segments_tensor = torch.tensor(lena*[0] + lenb*[1], dtype=torch.long)
-
-        return (tokens_tensor, label_tensor) # segments_tensor
-
-############################### Test ###############################
-class Test_loader():
-    def __init__(self, root, batch_size):
-        self.root = root
-        self.path = '{}fixed_{}.csv'
-        self.batch_size = batch_size
-        self.df_test = pd.read_csv(self.path.format(self.root, 'test'))
-        print("> Loading Datas from path {} ...".format(root))
-        print("Test datas : {}".format(len(self.df_test['conv_id'])))
-        self.preprocessing()
+        return {"tokens":tokens_tensor, "labels":label_tensor} # segments_tensor
+    def transform(self, value):
+        rv = [0] * 32
+        rv[value] = 1
+        return [rv]
 
 
-    def preprocessing(self):
-        self.df_test['prompt'] = self.df_test['prompt'].str.replace("_comma_", ",")
-        print("> Data Preprocessing ...")
 
 
-    def get_loader(self):
-        test_dataset = Test_Dataset_Handler(self.df_test)
-        test_dataloader = data.DataLoader(
-            test_dataset,
-            batch_size = self.batch_size,
-            shuffle = False,
-            num_workers = 1
-        )
-        return test_dataloader
 
-
-class Test_Dataset_Handler(data.Dataset):
-    def __init__(self, df):
-        self.texts = [tokenizer(text,
-                                truncation=True, return_tensors="pt")
-                      for text in df['prompt']
-                     ]
+class BiDataset_Handler(data.Dataset):
+    # 目前只考慮 prompt 與 label 之後要用 concate 可以從這裡下手
+    def __init__(self, df, mode, dtokenizer, nmask=5):
+        self.mode = mode
+        self.df = df
+        self.tokenizer = dtokenizer
+        self.number_mask = nmask
+        print("{} datas : {}".format(mode, len(self.df)))
     
     def __len__(self):
-        return len(self.texts)
-
+        return len(self.df)
+    
     def __getitem__(self, idx):
-        batch_text = self.texts[idx]
+        randn = random.randrange(len(self.df))
+        text_a, text_b = self.df.iloc[idx, 2:4].values
 
-        return batch_text
+        text_c, text_d = self.df.iloc[randn, 2:4].values
 
-# df_valid_pp = Dataset_Preprocessing('../dataset/', 'valid').preprocessing()
-# # valid_dataset = Dataset_Handler(df_valid_pp, 'Valid')
-# # print(valid_dataset)
+        label_tensor = torch.tensor(self.transform(self.df.iloc[idx, 4:5].item()), dtype=torch.float)
+        label_tensor2 = torch.tensor(self.transform(self.df.iloc[randn, 4:5].item()), dtype=torch.float)
 
-# train_dataloader , valid_dataloader = Dataset_loader('../dataset/', 2).get_loaders()
-# _, valid_dataloader = Dataset_loader('../dataset/', 2, 'distilbert-base-uncased-finetuned-sst-2-english').get_loaders()
-# # # # print(len(train_dataloader))
-# s = 0
-# for txt in train_dataloader:
-#     # print("--")
-#     print(txt)
-#     print(txt[0].squeeze(1))
-#     print(txt[1])
-#     print(txt[2])
-#     # print(txt[3])
-#     print(txt[0].shape[1])
-#     break
+        label_tensor = label_tensor * 0.5 + label_tensor2 * 0.5
+        # print(label_tensor)
+
+        tokens_a = ["[CLS]"] + self.tokenizer.tokenize(text_a) + ["[SEP]"]
+        tokens_b = self.tokenizer.tokenize(text_b) + ["[SEP]"]
+        merge_token1 = tokens_a + tokens_b
+        tokens_c = ["[CLS]"] + self.tokenizer.tokenize(text_c) + ["[SEP]"]
+        tokens_d = self.tokenizer.tokenize(text_d) + ["[SEP]"]
+        merge_token2 = tokens_c + tokens_d
 
 
+        # random delete if more than 512
+        while len(merge_token1) > 512:
+            n = ''
+            s = 0
+            while n=='' or n=='[CLS]' or n=='[SEP]':
+                s = random.randrange(len(merge_token1))
+                n = merge_token1[s]
+            merge_token1.pop(s)
 
-# test_loader = Test_loader('../dataset/', 1).get_loader()
+        while len(merge_token2) > 512:
+            n = ''
+            s = 0
+            while n=='' or n=='[CLS]' or n=='[SEP]':
+                s = random.randrange(len(merge_token2))
+                n = merge_token2[s]
+            merge_token2.pop(s)
 
-# for txt in test_loader:
-#     print(txt)
-#     break
+        # Argumentataion
+        if(self.mode == 'train'):
+            randmasknum = random.randrange(self.number_mask)+1
+            rn = 0
+            while rn < randmasknum:
+                n = ''
+                s = 0
+                while n=='' or n=='[CLS]' or n=='[SEP]':
+                    s = random.randrange(len(merge_token1))
+                    n = merge_token1[s]
+                merge_token1[s] = '[MASK]'
+                rn += 1
+
+            randmasknum = random.randrange(self.number_mask)+1
+            rn = 0
+            while rn < randmasknum:
+                n = ''
+                s = 0
+                while n=='' or n=='[CLS]' or n=='[SEP]':
+                    s = random.randrange(len(merge_token2))
+                    n = merge_token2[s]
+                merge_token2[s] = '[MASK]'
+                rn += 1
+        # print(merge_token)
+
+        idss = self.tokenizer.convert_tokens_to_ids(merge_token2)
+        ids = self.tokenizer.convert_tokens_to_ids(merge_token1)
+        tokens_tensor = torch.tensor(ids)
+        tokens_tensor2 = torch.tensor(idss)
+
+        return {"tokens":tokens_tensor, "tokens2":tokens_tensor2, "labels":label_tensor} # segments_tensor
+
+    def transform(self, value):
+        rv = [0] * 32
+        rv[value] = 1
+        return [rv]
+
 
