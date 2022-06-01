@@ -11,11 +11,8 @@ class Model_Process():
         self.criterion = config['Loss_function'].cuda()
         self.epoch = config['Epochs']
         self.optimizer = getattr(torch.optim, config['Optimizer'])(model.parameters(), **config['Optim_hparas'])
-        self.savepath = args.path
-        self.resultpath = args.resultpath
         self.acc = []
         self.loss = []
-        self.vision = args.vision
         self.max_acc = 0
         self.args = args
 
@@ -27,35 +24,38 @@ class Model_Process():
             total_acc_train = 0 
             total_loss_train = 0
 
-            for train_input, train_label in tqdm(train_dataloader):
-
-                train_label = train_label.to(device)
-                mask = train_input['attention_mask'].to(device)
-                input_id = train_input['input_ids'].squeeze(1).to(device)
+            for train_input in tqdm(train_dataloader):
+                
+                self.optimizer.zero_grad()
+                train_label = train_input[2].squeeze(1).to(device)
+                mask = train_input[1].squeeze(1).to(device)
+                # seg = train_input[1].squeeze(1).to(device)
+                input_id = train_input[0].squeeze(1).to(device)
 
                 output = self.model(input_id, mask)
-    #                 print(output)
-    #                 print(train_label)
                 
                 batch_loss = self.criterion(output, train_label)
                 total_loss_train += batch_loss.item()
+
                 
                 acc = (output.argmax(dim=1) == train_label).sum().item()
                 total_acc_train += acc
 
-                self.model.zero_grad()
                 batch_loss.backward()
+
                 self.optimizer.step()
             
             total_acc_valid = 0
             total_loss_valid = 0
 
             with torch.no_grad():
-                for val_input, val_label in valid_dataloader:
+                for val_input in valid_dataloader:
 
-                    val_label = val_label.to(device)
-                    mask = val_input['attention_mask'].to(device)
-                    input_id = val_input['input_ids'].squeeze(1).to(device)
+
+                    val_label = val_input[2].squeeze(1).to(device)
+                    mask = val_input[1].squeeze(1).to(device)
+                    # seg = val_input[1].squeeze(1).to(device)
+                    input_id = val_input[0].squeeze(1).to(device)
 
                     output = self.model(input_id, mask)
 
@@ -78,7 +78,7 @@ class Model_Process():
             
             if self.max_acc < avg_valid_acc:
                 self.max_acc = avg_valid_acc
-                torch.save(self.model.state_dict(), '{}classnlp_{}_{}'.format(self.savepath, self.vision, round(avg_valid_acc*100, 2)))
+                torch.save(self.model.state_dict(), '{}classnlp_{}_{}'.format(self.args.path, self.args.vision, round(avg_valid_acc*100, 2)))
 
     def test(self, test_loader, device):
         ans = []
@@ -97,7 +97,7 @@ class Model_Process():
 
         # print(ans)
         df['pred'] = ans
-        df.to_csv('{}_{}_{}_out.csv'.format(self.resultpath, self.args.loadname, self.args.vision))
+        df.to_csv('{}{}_out.csv'.format(self.args.resultpath, self.args.loadname))
 
 
         
