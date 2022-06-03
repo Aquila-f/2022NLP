@@ -4,7 +4,7 @@ from torch import nn
 import argparse
 
 from dataloader import Dataset_loader
-from model import BertClassifier, BiBertClassifier
+from model import BertClassifier, BiBertClassifier, SpBertClassifier
 from train import Model_Process
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -23,12 +23,13 @@ if __name__ == '__main__':
     parser.add_argument('--message', '-m', default="", type=str)
     parser.add_argument('--cudadev', '-cd', default=1, type=int)
     parser.add_argument('--learningrate', '-lr', default=1e-6, type=float)
-    parser.add_argument('--epoch', '-ep', default=5, type=int)
+    parser.add_argument('--epoch', '-ep', default=10, type=int)
     parser.add_argument('--batchsize', '-bs', default=1, type=int)
     parser.add_argument('--datadroppercent', '-dps', default=0, type=float)
-    parser.add_argument('--randommaskn', '-rm', default=3, type=int)
+    parser.add_argument('--randommaskn', '-rm', default=5, type=int)
     parser.add_argument('--classifer', '-cf', default=1, type=int)
-    parser.add_argument('--mixup', default=0, type=int)
+    parser.add_argument('--batchfunction', '-bf', default=0, type=int)
+    parser.add_argument('--dropdup', '-dd', default=1, type=bool)
     # parser.add
     args = parser.parse_args()
     
@@ -45,24 +46,26 @@ if __name__ == '__main__':
         },
         'Loss_function' : torch.nn.CrossEntropyLoss(),
         # 'Loss_function' : torch.nn.BCELoss(),
-        # 'Model_name' : 'distilbert-base-uncased-finetuned-sst-2-english',
+        # 'Model_name' : 'distilbert-base-cased-finetuned-sst-2-english',
         'Model_name' : args.pretrain_model,
         'Root' : '../dataset/',
         'Datadroppercent' : args.datadroppercent,
         'Random_maskn' : args.randommaskn,
         'Classifer' : args.classifer,
-        'Mixup' : args.mixup
+        'Batch_fn' : args.batchfunction,
+        'Drop_dup' : args.dropdup,
     }
     print(config)
 
     print("mode : {}".format(args.mode))
     torch.cuda.set_device(args.cudadev)
 
-    if args.mixup == 1:
+    if args.batchfunction == 1:
         model = BiBertClassifier(config['Model_name'], config['Classifer'])
-    else:    
+    elif args.batchfunction == 2:
+        model = SpBertClassifier(config['Model_name'], config['Classifer'])
+    else:
         model = BertClassifier(config['Model_name'], config['Classifer'])
-
     
     model = model.cuda()
     if args.loadname != "": model.load_state_dict(torch.load(args.path + args.loadname))
@@ -82,8 +85,10 @@ if __name__ == '__main__':
 
         model.train()
         p = Model_Process(model, config, args)
-        if args.mixup == 1:
+        if args.batchfunction == 1:
             p.Bitrain(train_dataloader, valid_dataloader, device)
+        elif args.batchfunction == 2:
+            p.Sptrain(train_dataloader, valid_dataloader, device)
         else:
             p.train(train_dataloader, valid_dataloader, device)
             
